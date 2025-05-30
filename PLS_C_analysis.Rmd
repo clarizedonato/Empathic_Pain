@@ -1,0 +1,175 @@
+---
+title: "PLS_C_analysis"
+author: "Quin"
+date: '2025-05-29'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(RColorBrewer)
+library(ggplot2)
+library(readxl)
+library(pls)        # Alternative PLS package
+library(corrplot)
+theme_set(theme_minimal(base_size = 25))
+```
+
+
+
+```{r input_files,include=FALSE}
+folder_path <- "./Connectivity_Matrices"
+csv_files <- list.files(path = folder_path, pattern = "*.csv", full.names = TRUE)
+file_id_list<-lapply(str_split(csv_files,"-|_"),"[",c(3,5))
+file_id<-unlist(lapply(file_id_list, function(x) paste(x, collapse="_")))
+connectivity_matrices <- lapply(csv_files, read.csv)
+names(connectivity_matrices)<-file_id
+
+participant_data<-read_xlsx("Dataset.xlsx")
+participant_data_clean<-participant_data%>%filter(!is.na(age)&!is.na(condition))%>%filter(SubID!=9)
+```
+
+
+
+```{r connectivity, echo=FALSE}
+# 1. Convert connectivity matrices to features
+# Extract the upper triangle of each connectivity matrix (excluding diagonal)
+extract_upper_tri <- function(matrix) {
+  upper_tri <- matrix[upper.tri(matrix)]
+  return(upper_tri)
+}
+
+# Apply the function to all connectivity matrices
+connectivity_features <- t(sapply(connectivity_matrices, extract_upper_tri))
+selected_participant<-unlist(map2(rep(sprintf("%03s",participant_data_clean$SubID),each =2), rep(c("01","02"),32), ~ paste(.x, .y, sep = "_")))
+
+valid_ids <- intersect(selected_participant, rownames(connectivity_features))
+connectivity_features_selected <- connectivity_features[valid_ids, ]
+
+
+# Number of features (connections)
+n_connections <- ncol(connectivity_features)
+
+```
+
+
+```{r metadata, echo=FALSE}
+behavioral_data1<- participant_data_clean %>%
+  # mutate(socialConnectedness_change = socialConnectedness_mean_T2-socialConnectedness_mean_T1, loneliness_change = loneliness_mean_T2-loneliness_mean_T1)%>%
+  select(condition,age,Female,contains("mean_T1")) 
+colnames(behavioral_data1)<-gsub("_T1","",colnames(behavioral_data1))
+behavioral_data1$time<-1
+
+behavioral_data2<- participant_data_clean %>%
+  select(condition,age,Female,contains("mean_T2"))
+colnames(behavioral_data2)<-gsub("_T2","",colnames(behavioral_data2))
+behavioral_data2$time<-2
+
+behavioral_data<-rbind(behavioral_data1,behavioral_data2) %>%
+  as.matrix()
+
+```
+
+```{r pls_run, warning = F}
+# Standardize the data
+connectivity_features_scaled <- scale(connectivity_features_selected)
+behavioral_data_scaled <- scale(behavioral_data)
+
+# Run PLS-C analysis
+pls_result <- plsr(behavioral_data_scaled ~ connectivity_features_scaled, 
+                   ncomp = min(5, ncol(behavioral_data_scaled)), 
+                   validation = "CV", 
+                   method = "oscorespls")
+summary(pls_result)
+```
+
+```{r pls_plot1, warning = F}
+# Plot explained variance by number of components
+explained_var <- as.data.frame(R2(pls_result)) %>%
+  rownames_to_column("Component") 
+
+ggplot(explained_var, aes(x = comps, y = value, color = response, group = response))+
+  geom_line(size=1) +
+  geom_point(size=2) +
+  theme_minimal() +
+  labs(title = "Explained Variance by PLS Component", 
+       x = "Number of Components", 
+       y = "R-squared")+
+  scale_color_viridis_d()
+
+
+rmse <- as.data.frame(RMSEP(pls_result)) %>%
+  rownames_to_column("Component")
+rmse$response = rep(rep(c("condition","age","Female","socialConnectedness_mean","loneliness_mean","time"), each = 2),6)
+
+rmse%>%filter(estimate == "CV")%>%ggplot(aes(x = comps, y = value, color = response, group = response))+
+  geom_line(size=1) +
+  geom_point(size=2) +
+  theme_minimal() +
+  labs(title = "Error by adding PLS Components", 
+       x = "Number of Components", 
+       y = "RMSEP")+
+  scale_color_viridis_d()
+# should keep at most 2 components
+```
+```{r pls_plot2, warning = F}
+# plot variable loadings for behavioral variables
+loadings_behavior <- Yloadings(pls_result)
+loadings_behavior_df <- as.data.frame(loadings_behavior[,1:5]) %>%
+  rownames_to_column("Variable") %>%
+  pivot_longer(-Variable, names_to = "Component", values_to = "Loading")
+
+ggplot(loadings_behavior_df, aes(x = Variable, y = Loading,fill = (Loading>0))) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Behavioral Variable Loadings for All Components",
+       x = "Variable", y = "Loading") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+facet_wrap(~Component,nrow = 2)+scale_fill_viridis_d(guide = F)
+```
+
+```{r pls_plot3, warning = F}
+# connectivity loadings for the first component
+# These represent the brain connections most associated with the behavioral variables
+loadings_connectivity <- pls_result$loadings[,1]
+
+# Convert loadings back to matrix form for visualization
+loading_matrix <- matrix(0, nrow = 69, ncol = 69)
+loading_matrix[upper.tri(loading_matrix)] <- loadings_connectivity
+loading_matrix <- loading_matrix + t(loading_matrix)
+
+# Plot the loading matrix
+corrplot::corrplot(loading_matrix, # method = "circle", 
+         # type = "p",
+         col=brewer.pal(n=11, name="RdYlBu"),
+         title = "Connectivity Loadings for First PLS Component",
+         is.corr = FALSE , tl.cex = 0.6
+         )
+
+```
+
+
+```{r pls_plot4, warning = F}
+
+# Extract PLS scores for the first component
+pls_scores <- scores(pls_result)[,1:2]
+
+# Create dataframe for plotting
+scores_df <- data.frame(behavioral_data_scaled[-c(32,64),],pls_scores)%>%mutate(condition = ifelse(condition < 0,"LKM","PMR"),time = ifelse(time<0,"T1","T2"))
+
+# Plot relationship
+ggplot(scores_df, aes(x = Comp.1, y = Comp.2,color = condition, shape = time,group = interaction(time, condition))) +
+  stat_ellipse(aes(linetype = time))+
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Condition comparison at T1 and T2",
+       x = "PLS component 1", 
+       y = "PLS Component 2")+
+  scale_color_viridis_d()
+
+# Calculate correlation
+cor_test <- cor.test(scores_df$loneliness_mean, scores_df$Comp.2)
+print(paste("Correlation between loneliness and PLS Component 2:", 
+            round(cor_test$estimate, 2), 
+            "p-value:", round(cor_test$p.value, 2)))
+```
