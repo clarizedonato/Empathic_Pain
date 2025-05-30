@@ -1,0 +1,157 @@
+---
+title: "Circos_Plot_Brainhack_Final"
+output: html_document
+date: "2025-05-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+##This code was used to create a Circos plot visualizing functional connectivity between roi pairs
+```
+
+```{r}
+##Install this package which is needed to create the plot 
+install.packages("circlize")
+library(circlize)
+```
+
+```{r}
+##Read in your csv files that have your linear regression results 
+loneliness_run1_T2 <- read.csv("path/to/your/results/results_run1_loneliness_T2.csv")
+loneliness_run2_T2 <- read.csv("path/to/your/results/results_run2_loneliness_T2.csv")
+connectedness_run1_T2 <- read.csv("path/to/your/results/results_run1_connectedness_T2.csv")
+connectedness_run2_T2 <- read.csv("path/to/your/results/results_run2_connectedness_T2.csv")
+```
+
+```{r}
+##subsetting csvs to keep only the significant results (i.e., p-value < 0.05)
+sig_loneliness_run1_T2 <- subset(loneliness_run1_T2, p_value <0.05) 
+sig_loneliness_run2_T2 <- subset(loneliness_run2_T2, p_value <0.05)  
+sig_connectedness_run1_T2 <- subset(connectedness_run1_T2, p_value <0.05) 
+sig_connectedness_run2_T2 <- subset(connectedness_run2_T2, p_value <0.05) 
+```
+
+```{r}
+##the original csvs have roi pairs (i.e., Insular Cortex - Intracalcarine Cortex)
+##need to separate them for the plot
+##separating ROI pairs
+sig_connectedness_run1_T2$roi1 <- sapply(strsplit(as.character(sig_connectedness_run1_T2$roi_pair), "-"), `[`, 1)
+sig_connectedness_run1_T2$roi2 <- sapply(strsplit(as.character(sig_connectedness_run1_T2$roi_pair), "-"), `[`, 2)
+```
+
+```{r}
+#creating a list of all the unique ROIs 
+rois <- unique(c(sig_connectedness_run1_T2$roi1, sig_connectedness_run1_T2$roi2))
+```
+
+```{r}
+##Plotting the first circos plot for functional connectivity association with social connectedness, run 1 
+circos.clear()
+circos.par(start.degree = 30)
+circos.initialize(factors = rois, xlim = c(0,1))
+
+circos.trackPlotRegion(
+  ylim = c(0, 1),
+  bg.border = "grey",
+  panel.fun = function(x, y) {
+    sector_name <- get.cell.meta.data("sector.index")
+    circos.text(
+      x = 0.5, y = 0.5,
+      labels = sector_name,
+      facing = "bending.inside",
+      niceFacing = TRUE,
+      cex = 0.8, 
+      font = 2
+    )
+  }
+)
+
+##loop through dataframe and draw links 
+for (i in 1:nrow(sig_connectedness_run1_T2)) {
+  col <- ifelse(sig_connectedness_run1_T2$t_stat[i] > 0, "red", "blue")  # color by t_stat
+  circos.link(
+    sig_connectedness_run1_T2$roi1[i], c(0.5, 0.5),
+    sig_connectedness_run1_T2$roi2[i], c(0.5, 0.5),
+    col = col,
+    lwd = 10
+  )
+}
+```
+
+```{r}
+##repeating same process for functional connectivity association with social connectedness, run 2 
+sig_connectedness_run2_T2$roi1 <- sapply(strsplit(as.character(sig_connectedness_run2_T2$roi_pair), "-"), `[`, 1)
+sig_connectedness_run2_T2$roi2 <- sapply(strsplit(as.character(sig_connectedness_run2_T2$roi_pair), "-"), `[`, 2)
+rois_con_2 <- unique(c(sig_connectedness_run2_T2$roi1, sig_connectedness_run2_T2$roi2))
+```
+
+```{r}
+##Plotting second circos plot for functional connectivity association with social connectedness, run 2 
+png("connectedness.png", width = 4000, height = 4000, res = 300) #make sure you are in the working directory where you want to save your plot
+
+library(circlize)
+
+circos.clear()
+circos.par(gap.degree = 0.5, start.degree = 90)  # adjust start.degree if you want top ROI centered
+circos.initialize(factors = rois_con_2, xlim = c(0, 1))
+
+circos.trackPlotRegion(
+  ylim = c(0, 1),
+  bg.border = "grey",
+  panel.fun = function(x, y) {
+    sector_name <- get.cell.meta.data("sector.index")
+    label_lines <- strsplit(sector_name, " ")[[1]]
+
+    # Label positioning
+    y_start <- 0.75
+    y_step <- 0.20
+
+    for (j in seq_along(label_lines)) {
+      circos.text(
+        x = 0.5,
+        y = y_start - (j - 1) * y_step,
+        labels = label_lines[j],
+        facing = "inside",        # simpler and more consistent
+        niceFacing = FALSE,       # critical to preserve word order
+        cex = 1.5,
+        font = 2
+      )
+    }
+  }
+)
+
+# Draw links
+for (i in 1:nrow(sig_connectedness_run2_T2)) {
+  col <- ifelse(sig_connectedness_run2_T2$t_stat[i] > 0, "red", "blue")
+  circos.link(
+    sig_connectedness_run2_T2$roi1[i], c(0.5, 0.5),
+    sig_connectedness_run2_T2$roi2[i], c(0.5, 0.5),
+    col = col,
+    lwd = 10
+  )
+}
+```
+
